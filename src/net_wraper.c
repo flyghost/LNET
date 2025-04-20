@@ -237,7 +237,7 @@ int udp_receive(uint32_t *src_ip, uint16_t *src_port, uint16_t *dst_port,
         return -1;
     }
     
-    uint8_t packet[TFTP_PACKET_MAX_SIZE];
+    uint8_t packet[NET_MTU_MAX];
     uint32_t start_time = net_get_time_ms(); // 需要实现获取当前时间的函数
     
     while (1) {

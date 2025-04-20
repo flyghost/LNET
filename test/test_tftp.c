@@ -1,127 +1,219 @@
 #include "tftp.h"
+#include "tftpclient.h"
+#include "tftpserver.h"
 #include "net_wrapper.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
-// 客户端配置（192.168.1.2 → 手动计算大端序值）
+// 测试文件内容
+static const char *test_file_content = "1234567890abcdefghijklmnopqrstuvwxyz";
+static const char *test_download_filename = "test_download.txt";
+
+static const char *test_upload_filename = "test_uplaod.txt";
+
+// 网络配置
 static net_config_t client_config = {
-    .ip_addr = 0x0201A8C0,    // 存储为小端的0x0201A8C0 → 网络层解析为大端的C0 A8 01 02 (192.168.1.2)
-    .netmask = 0x00FFFFFF,    // 255.255.255.0 → 存储为0x00FFFFFF → 解析为FF FF FF 00
-    .gateway = 0x0101A8C0,    // 192.168.1.1 → 存储为0x0101A8C0 → 解析为C0 A8 01 01
-    .mac_addr = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}  // MAC: 11:22:33:44:55:66
+    .ip_addr = 0x0201A8C0,    // 192.168.1.2
+    .netmask = 0x00FFFFFF,    // 255.255.255.0
+    .gateway = 0x0101A8C0,    // 192.168.1.1
+    .mac_addr = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}
 };
 
-// 服务器配置（192.168.1.3 → 手动计算大端序值）
 static net_config_t server_config = {
-    .ip_addr = 0x0101A8C0,    // 存储为小端的0x0301A8C0 → 网络层解析为大端的C0 A8 01 01 (192.168.1.1)
-    .netmask = 0x00FFFFFF,    // 255.255.255.0 → 存储为0x00FFFFFF → 解析为FF FF FF 00
-    .gateway = 0x0101A8C0,    // 192.168.1.1 → 存储为0x0101A8C0 → 解析为C0 A8 01 01
-    .mac_addr = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}  // MAC: AA:BB:CC:DD:EE:FF
+    .ip_addr = 0x0301A8C0,    // 192.168.1.3
+    .netmask = 0x00FFFFFF,    // 255.255.255.0
+    .gateway = 0x0101A8C0,    // 192.168.1.1
+    .mac_addr = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 };
 
-// 网络设备操作回调
-static void client_rx_callback(uint8_t *buffer, size_t length) {
-    NET_LOGD("Client received %zu bytes", length);
+// 文件操作回调函数
+static int read_file_cb(void *user_data, const char *filename, uint8_t *buffer, size_t max_size) {
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) return -1;
+    
+    size_t bytes_read = fread(buffer, 1, max_size, fp);
+    fclose(fp);
+    
+    return bytes_read;
 }
 
-static void client_tx_callback(uint8_t *buffer, size_t length) {
-    NET_LOGD("Client sent %zu bytes", length);
+static int write_file_cb(void *user_data, const char *filename, const uint8_t *data, size_t size) {
+    FILE *fp = fopen(filename, "ab");
+    if (!fp) return -1;
+    
+    size_t bytes_written = fwrite(data, 1, size, fp);
+    fclose(fp);
+    
+    return (bytes_written == size) ? 0 : -1;
 }
 
-static void server_rx_callback(uint8_t *buffer, size_t length) {
-    NET_LOGD("Server received %zu bytes", length);
+static int get_data_cb(void *user_data, uint8_t *buffer, size_t max_size) {
+    const char **content = (const char **)user_data;
+    static size_t pos = 0;
+    size_t remaining = strlen(*content) - pos;
+    
+    if (remaining == 0) return 0;
+    
+    size_t to_copy = (remaining < max_size) ? remaining : max_size;
+    memcpy(buffer, *content + pos, to_copy);
+    pos += to_copy;
+    
+    return to_copy;
 }
 
-static void server_tx_callback(uint8_t *buffer, size_t length) {
-    NET_LOGD("Server sent %zu bytes", length);
+static int data_cb(void *user_data, const uint8_t *data, size_t size) {
+    FILE *fp = (FILE *)user_data;
+    return (fwrite(data, 1, size, fp) == size) ? 0 : -1;
+}
+
+// 创建测试文件
+static int create_test_file(const char *filename) {
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) return -1;
+    
+    size_t len = strlen(test_file_content);
+    if (fwrite(test_file_content, 1, len, fp) != len) {
+        fclose(fp);
+        return -1;
+    }
+    
+    fclose(fp);
+    return 0;
+}
+
+// 验证文件内容
+static int verify_file_content(const char *filename) {
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) return -1;
+    
+    char buffer[512];
+    size_t len = strlen(test_file_content);
+    if (fread(buffer, 1, len, fp) != len) {
+        fclose(fp);
+        return -1;
+    }
+    
+    fclose(fp);
+    return memcmp(buffer, test_file_content, len) == 0 ? 0 : -1;
+}
+
+// 客户端上传文件
+static int tftp_put_file(const char *filename, uint32_t server_ip, const char *mode) {
+    tftp_session_t session = {
+        .peer_ip = server_ip,
+        .peer_port = TFTP_DEFAULT_PORT,
+        .local_port = 0,  // 让系统自动分配
+        .block_num = 0,
+        .retry_count = 0
+    };
+    tftp_init_default_options(&session.options);
+    
+    const char *content = test_file_content;
+    return tftp_client_put(&session, filename, get_data_cb, (void *)&content);
+}
+
+// 客户端下载文件
+static int tftp_get_file(const char *filename, uint32_t server_ip, const char *mode) {
+    tftp_session_t session = {
+        .peer_ip = server_ip,
+        .peer_port = TFTP_DEFAULT_PORT,
+        .local_port = 0,  // 让系统自动分配
+        .block_num = 0,
+        .retry_count = 0,
+        .options = {
+            .block_size = 1024,
+            .timeout_ms = TFTP_DEFAULT_TIMEOUT_MS,
+            .transfer_size = 0,
+            .wait_oack = true,
+            .retries = TFTP_DEFAULT_RETRIES
+        }
+    };
+    // tftp_init_default_options(&session.options);
+    
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) return -1;
+    
+    int result = tftp_client_get(&session, filename, data_cb, fp);
+    fclose(fp);
+    
+    return result;
 }
 
 // 客户端测试
-void test_tftp_client(void) {
-    NET_LOGD("=== Starting TFTP Client Test ===");
+static void test_client(uint32_t server_ip) {
+    printf("=== Starting TFTP Client Test ===\n");
     
-    net_device_ops_t ops = {
-        .tx_callback = client_tx_callback,
-        .rx_callback = client_rx_callback
-    };
-    
-    // 初始化网络
     if (net_wrapper_init(&client_config) != 0) {
-        NET_LOGD("Client network init failed");
+        printf("Client network init failed\n");
         return;
     }
     
-    // 初始化TFTP
-    // if (tftp_init() != 0) {
-    //     NET_LOGD("TFTP init failed");
-    //     return;
-    // }
-    
     // 测试上传文件
-    // NET_LOGD("Testing file upload...");
-    // if (tftp_put_file("test.txt", server_config.ip_addr, "octet") == 0) {
-    //     NET_LOGD("File upload successful");
-    // } else {
-    //     NET_LOGD("File upload failed");
-    // }
-    
-    // 测试下载文件
-    NET_LOGD("Testing file download...");
-    if (tftp_get_file("test.txt", server_config.ip_addr, "octet") == 0) {
-        NET_LOGD("File download successful");
-    } else {
-        NET_LOGD("File download failed");
+    printf("Testing file upload...\n");
+    if (create_test_file(test_upload_filename) != 0) {
+        printf("Failed to create test file\n");
+        return;
     }
     
-    NET_LOGD("=== TFTP Client Test Complete ===");
+    if (tftp_put_file(test_upload_filename, server_ip, "octet") == 0) {
+        printf("File upload successful\n");
+    } else {
+        printf("File upload failed\n");
+    }
+    
+    // 测试下载文件
+    printf("Testing file download...\n");
+    if (tftp_get_file(test_download_filename, server_ip, "octet") == 0) {
+        printf("File download successful\n");
+        
+        if (verify_file_content(test_download_filename) == 0) {
+            printf("test file content verified success\n");
+        } else {
+            printf("test file content verification failed\n");
+        }
+    } else {
+        printf("File download failed\n");
+    }
+    
+    printf("=== TFTP Client Test Complete ===\n");
 }
 
 // 服务器测试
-void test_tftp_server(void) {
-    NET_LOGD("=== Starting TFTP Server Test ===");
+static void test_server(void) {
+    printf("=== Starting TFTP Server Test ===\n");
     
-    net_device_ops_t ops = {
-        .tx_callback = server_tx_callback,
-        .rx_callback = server_rx_callback
-    };
-    
-    // 初始化网络
     if (net_wrapper_init(&server_config) != 0) {
-        NET_LOGD("Server network init failed");
+        printf("Server network init failed\n");
         return;
     }
     
-    // 初始化TFTP
-    // if (tftp_init() != 0) {
-    //     NET_LOGD("TFTP init failed");
-    //     return;
-    // }
+    printf("TFTP server running...\n");
+    printf("Press Ctrl+C to stop the server\n");
     
-    NET_LOGD("TFTP server running...");
     while (1) {
-        tftp_server_process();
-        // 在实际应用中，这里应该有其他任务或休眠
+        tftp_server_process(read_file_cb, write_file_cb, NULL);
     }
     
-    NET_LOGD("=== TFTP Server Test Complete ===");
+    printf("=== TFTP Server Test Complete ===\n");
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        NET_LOGD("Usage:");
-        NET_LOGD("  %s client    - Run TFTP client test", argv[0]);
-        NET_LOGD("  %s server    - Run TFTP server test", argv[0]);
+        printf("Usage:\n");
+        printf("  %s client    - Run TFTP client test\n", argv[0]);
+        printf("  %s server    - Run TFTP server test\n", argv[0]);
         return 1;
     }
     
     if (strcmp(argv[1], "client") == 0) {
-        test_tftp_client();
+        test_client(server_config.ip_addr);
     } 
     else if (strcmp(argv[1], "server") == 0) {
-        test_tftp_server();
+        test_server();
     }
     else {
-        NET_LOGD("Invalid argument");
+        printf("Invalid argument\n");
         return 1;
     }
     
