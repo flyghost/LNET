@@ -7,9 +7,10 @@
 #include <stdlib.h>
 
 // 测试文件内容
-static const char *test_file_content = "1234567890abcdefghijklmnopqrstuvwxyz";
+static const char *test_download_file_content = "this is a test download file";
 static const char *test_download_filename = "test_download.txt";
 
+static const char *test_upload_file_content = "this is a test upload file";
 static const char *test_upload_filename = "test_uplaod.txt";
 
 // 网络配置
@@ -68,12 +69,12 @@ static int data_cb(void *user_data, const uint8_t *data, size_t size) {
 }
 
 // 创建测试文件
-static int create_test_file(const char *filename) {
+static int create_test_file(const char *filename, const char *filecontent) {
     FILE *fp = fopen(filename, "wb");
     if (!fp) return -1;
     
-    size_t len = strlen(test_file_content);
-    if (fwrite(test_file_content, 1, len, fp) != len) {
+    size_t len = strlen(filecontent);
+    if (fwrite(filecontent, 1, len, fp) != len) {
         fclose(fp);
         return -1;
     }
@@ -83,23 +84,23 @@ static int create_test_file(const char *filename) {
 }
 
 // 验证文件内容
-static int verify_file_content(const char *filename) {
+static int verify_file_content(const char *filename, const char *filecontent) {
     FILE *fp = fopen(filename, "rb");
     if (!fp) return -1;
     
     char buffer[512];
-    size_t len = strlen(test_file_content);
+    size_t len = strlen(filecontent);
     if (fread(buffer, 1, len, fp) != len) {
         fclose(fp);
         return -1;
     }
     
     fclose(fp);
-    return memcmp(buffer, test_file_content, len) == 0 ? 0 : -1;
+    return memcmp(buffer, filecontent, len) == 0 ? 0 : -1;
 }
 
 // 客户端上传文件
-static int tftp_put_file(const char *filename, uint32_t server_ip, const char *mode) {
+static int tftp_put_file(const char *filename, uint32_t server_ip, const char *mode, void *user_data) {
     tftp_session_t session = {
         .peer_ip = server_ip,
         .peer_port = TFTP_DEFAULT_PORT,
@@ -109,8 +110,7 @@ static int tftp_put_file(const char *filename, uint32_t server_ip, const char *m
     };
     tftp_init_default_options(&session.options);
     
-    const char *content = test_file_content;
-    return tftp_client_put(&session, filename, get_data_cb, (void *)&content);
+    return tftp_client_put(&session, filename, get_data_cb, user_data);
 }
 
 // 客户端下载文件
@@ -151,12 +151,14 @@ static void test_client(uint32_t server_ip) {
     
     // 测试上传文件
     printf("Testing file upload...\n");
-    if (create_test_file(test_upload_filename) != 0) {
+    if (create_test_file(test_upload_filename, test_upload_file_content) != 0) {
         printf("Failed to create test file\n");
         return;
     }
+
+    const char *content = test_upload_file_content;
     
-    if (tftp_put_file(test_upload_filename, server_ip, "octet") == 0) {
+    if (tftp_put_file(test_upload_filename, server_ip, "octet", (void *)&content) == 0) {
         printf("File upload successful\n");
     } else {
         printf("File upload failed\n");
@@ -167,7 +169,7 @@ static void test_client(uint32_t server_ip) {
     if (tftp_get_file(test_download_filename, server_ip, "octet") == 0) {
         printf("File download successful\n");
         
-        if (verify_file_content(test_download_filename) == 0) {
+        if (verify_file_content(test_download_filename, test_download_file_content) == 0) {
             printf("test file content verified success\n");
         } else {
             printf("test file content verification failed\n");
