@@ -1,0 +1,72 @@
+# ========== 编译生成文件和目录 ==========
+# CMake 生成的文件
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+*.ninja
+.ninja_deps
+.ninja_log
+
+# 构建目录（通常命名为 build/ 或 _build/）
+build/
+_build/
+out/
+bin/
+lib/
+*.a
+*.so
+*.dylib
+*.lib
+*.dll
+
+# ========== 可执行文件和测试文件 ==========
+*.exe
+*.out
+*.app
+*.test
+*.bin
+
+# ========== 开发环境文件 ==========
+# IDE 相关
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+
+# ========== 临时文件和日志 ==========
+*.log
+*.tmp
+*.bak
+*.pid
+*.DS_Store
+Thumbs.db
+
+# ========== 依赖和包管理 ==========
+# Conan 包管理器
+.conan/
+.conan_targets/
+
+# vcpkg 包管理器
+vcpkg_installed/
+vcpkg_ports/
+vcpkg/
+
+# ========== 文档生成 ==========
+docs/_build/
+Doxygen/
+
+# ========== 其他 ==========
+# 本地配置文件（如数据库密码等）
+local.properties
+.env
+*.local
