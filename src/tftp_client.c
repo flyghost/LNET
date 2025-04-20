@@ -122,7 +122,7 @@ int tftp_client_get(tftp_session_t* session, const char* filename,
         tftp_options_t negotiated = session->options;
         tftp_parse_options(data, data_len, &negotiated);
 
-        NET_LOGD("Negotiated options: block_size=%u, timeout_ms=%u",
+        NET_LOGD("Get OACK, Negotiated options: block_size=%u, timeout_ms=%u",
                  negotiated.block_size, negotiated.timeout_ms);
         
         // 发送ACK0确认选项
@@ -134,21 +134,31 @@ int tftp_client_get(tftp_session_t* session, const char* filename,
         }
         
         session->options = negotiated;
-    } else if (opcode != TFTP_DATA || ntohs(*(uint16_t*)data) != 1) {
+        session->block_num = 1;
+        NET_LOGD("Waiting for DATA or ACK");
+    } else if (opcode != TFTP_DATA || ntohs(*(uint16_t*)data) != 0) {
         NET_HEX_DUMP(data, data_len);
         NET_LOGE("Invalid first packet");
         return -1;
     }
+    else if (opcode == TFTP_DATA && !session->options.wait_oack) {
+        session->block_num = 0;
+        NET_LOGD("GET Fisrt DATA without OACK");
+    }
+    else {
+        session->block_num = 1;
+        NET_LOGD("GET DATA");
+    }
     
     // 开始接收数据
-    session->block_num = 1;
+    // session->block_num = 1;
     bool last_packet = false;
     
     while (!last_packet) {
-        NET_LOGD("Waiting for DATA or ACK");
         // 处理数据包
         if (opcode == TFTP_DATA) {
             NET_LOGD("Received DATA block %u", session->block_num);
+            NET_HEX_DUMP(data, data_len);
             uint16_t block_num = ntohs(*(uint16_t*)data);
             if (block_num == session->block_num) {
                 // 调用回调处理数据
@@ -167,6 +177,7 @@ int tftp_client_get(tftp_session_t* session, const char* filename,
                 // 检查是否为最后一个包
                 if (data_len - 2 < session->options.block_size) {
                     last_packet = true;
+                    NET_LOGD("Last packet received");
                 } else {
                     session->block_num++;
                 }

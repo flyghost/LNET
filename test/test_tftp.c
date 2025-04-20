@@ -115,6 +115,9 @@ static int tftp_put_file(const char *filename, uint32_t server_ip, const char *m
 
 // 客户端下载文件
 static int tftp_get_file(const char *filename, uint32_t server_ip, const char *mode) {
+
+// 测试使用OACK
+#if 1
     tftp_session_t session = {
         .peer_ip = server_ip,
         .peer_port = TFTP_DEFAULT_PORT,
@@ -130,6 +133,16 @@ static int tftp_get_file(const char *filename, uint32_t server_ip, const char *m
         }
     };
     // tftp_init_default_options(&session.options);
+#else
+    tftp_session_t session = {
+        .peer_ip = server_ip,
+        .peer_port = TFTP_DEFAULT_PORT,
+        .local_port = 0,  // 让系统自动分配
+        .block_num = 0,
+        .retry_count = 0,
+    };
+    tftp_init_default_options(&session.options);
+#endif
     
     FILE *fp = fopen(filename, "wb");
     if (!fp) return -1;
