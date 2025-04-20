@@ -30,7 +30,8 @@ target_include_directories(net_wraper PUBLIC include)
 target_link_libraries(net_wraper PUBLIC net_device)
 
 # 添加测试程序
-add_executable(test_tftp test/test_tftp.c)
+# add_executable(test_tftp test/test_tftp.c)
+add_executable(test_tftp test/test_tftp_no_filesystem.c)
 target_link_libraries(test_tftp PRIVATE net_device net_wraper tftp)
 
 # 启用测试
