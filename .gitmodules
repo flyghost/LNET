@@ -1,0 +1,4 @@
+[submodule "3rd/net_flex"]
+    path = 3rd/net_flex
+    url = git@github.com:flyghost/net_flex.git
+    branch = master
