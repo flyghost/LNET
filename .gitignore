@@ -50,6 +50,7 @@ lib/
 *.pid
 *.DS_Store
 Thumbs.db
+net_device
 
 # ========== 依赖和包管理 ==========
 # Conan 包管理器
